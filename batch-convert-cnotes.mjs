@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
-import { execFileSync } from "node:child_process";
+import sharp from "sharp";
 
 const workspace = process.cwd();
 const outputRoot = path.join(workspace, "cnote_exports");
 
-function main() {
+async function main() {
   const sourceRoots = process.argv.slice(2).map((source) => path.resolve(source));
   const jobs = sourceRoots.length > 0
     ? sourceRoots.flatMap((sourceRoot) => discoverCnoteJobs(sourceRoot))
@@ -46,7 +46,7 @@ function main() {
       for (const note of extracted.noteFiles) {
         recoverNoteMedia(note.json, mediaDir, manifest);
       }
-      recoverPageAttachments(extracted.cpageFiles, mediaDir, manifest);
+      await recoverPageAttachments(extracted.cpageFiles, mediaDir, manifest);
 
       if (extracted.cpageFiles.length > 0) {
         const noteMeta = extracted.noteFiles.find((note) => Array.isArray(note.json.size))?.json ?? {};
@@ -190,14 +190,14 @@ function classifyEntry(name, bytes, result, manifest) {
   }
 }
 
-function recoverPageAttachments(cpageFiles, mediaDir, manifest) {
+async function recoverPageAttachments(cpageFiles, mediaDir, manifest) {
   const attachmentDir = path.join(mediaDir, "attachments");
   for (const page of cpageFiles) {
     const pageNumber = page.name.replace(/\D+/g, "") || "page";
     const attachments = Array.isArray(page.json.attachments) ? page.json.attachments : [];
     page.renderAttachments = [];
 
-    attachments.forEach((attachment, index) => {
+    attachments.forEach(async (attachment, index) => {
       if (attachment?.type !== "image" || typeof attachment.imageInData !== "string") return;
       const bytes = Buffer.from(attachment.imageInData, "base64");
       const ext = isPng(bytes) ? "png" : isJpeg(bytes) ? "jpg" : "bin";
@@ -207,7 +207,7 @@ function recoverPageAttachments(cpageFiles, mediaDir, manifest) {
       fs.writeFileSync(imagePath, bytes);
       manifest.push(`Recovered image attachment: ${path.relative(path.dirname(mediaDir), imagePath)}`);
 
-      const jpeg = imageForPdf(bytes, ext, imagePath);
+      const jpeg = await imageForPdf(bytes, ext, imagePath);
       if (jpeg) {
         page.renderAttachments.push({
           ...attachment,
@@ -218,7 +218,7 @@ function recoverPageAttachments(cpageFiles, mediaDir, manifest) {
   }
 }
 
-function imageForPdf(bytes, ext, sourcePath) {
+async function imageForPdf(bytes, ext, sourcePath) {
   if (ext === "jpg") {
     const size = jpegSize(bytes);
     return { bytes, width: size.width, height: size.height };
@@ -226,20 +226,16 @@ function imageForPdf(bytes, ext, sourcePath) {
 
   if (ext !== "png") return null;
 
-  const jpegPath = sourcePath.replace(/\.png$/i, ".pdf-render.jpg");
-  try {
-    execFileSync("sips", ["-s", "format", "jpeg", sourcePath, "--out", jpegPath], { stdio: "ignore" });
-    const jpegBytes = fs.readFileSync(jpegPath);
+   try {
+    const jpegBytes = await sharp(bytes)
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    
     const size = jpegSize(jpegBytes);
     return { bytes: jpegBytes, width: size.width, height: size.height };
-  } catch {
+  } catch (error) {
+    console.error(`Error converting PNG to JPEG at ${sourcePath}:`, error.message);
     return null;
-  } finally {
-    try {
-      if (fs.existsSync(jpegPath)) fs.unlinkSync(jpegPath);
-    } catch {
-      // Best effort cleanup for temporary PDF render files.
-    }
   }
 }
 

@@ -4,9 +4,10 @@ A local script for converting CollaNote `.cnote` files into PDFs. It also extrac
 
 ## Requirements
 
-- macOS
+- macOS, Windows, or Linux
 - Node.js
-- macOS `sips`, used only when PNG attachments need to be converted for PDF rendering
+- `sharp`, used only when PNG attachments need to be converted for PDF rendering
+(install with `npm install sharp`)
 
 ## Usage
 
