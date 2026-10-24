@@ -87,6 +87,7 @@ async function main() {
   }
 
   console.log(`Converted ${converted} .cnote file(s); ${failed} failed.`);
+  if (failed > 0) process.exitCode = 1;
 }
 
 function discoverCnoteJobs(sourceRoot) {
@@ -197,8 +198,9 @@ async function recoverPageAttachments(cpageFiles, mediaDir, manifest) {
     const attachments = Array.isArray(page.json.attachments) ? page.json.attachments : [];
     page.renderAttachments = [];
 
-    attachments.forEach(async (attachment, index) => {
-      if (attachment?.type !== "image" || typeof attachment.imageInData !== "string") return;
+    // Await each conversion and preserve attachment order for PDF layering.
+    for (const [index, attachment] of attachments.entries()) {
+      if (attachment?.type !== "image" || typeof attachment.imageInData !== "string") continue;
       const bytes = Buffer.from(attachment.imageInData, "base64");
       const ext = isPng(bytes) ? "png" : isJpeg(bytes) ? "jpg" : "bin";
       const fileName = `page-${String(pageNumber).padStart(2, "0")}-attachment-${index + 1}.${ext}`;
@@ -213,8 +215,10 @@ async function recoverPageAttachments(cpageFiles, mediaDir, manifest) {
           ...attachment,
           pdfImage: jpeg,
         });
+      } else {
+        manifest.push(`Skipped unsupported image attachment in PDF: ${path.relative(path.dirname(mediaDir), imagePath)}`);
       }
-    });
+    }
   }
 }
 
@@ -226,16 +230,16 @@ async function imageForPdf(bytes, ext, sourcePath) {
 
   if (ext !== "png") return null;
 
-   try {
+  try {
     const jpegBytes = await sharp(bytes)
+      .flatten({ background: "#ffffff" })
       .jpeg({ quality: 90 })
       .toBuffer();
-    
+
     const size = jpegSize(jpegBytes);
     return { bytes: jpegBytes, width: size.width, height: size.height };
   } catch (error) {
-    console.error(`Error converting PNG to JPEG at ${sourcePath}:`, error.message);
-    return null;
+    throw new Error(`Could not convert PNG attachment ${sourcePath}: ${error.message}`, { cause: error });
   }
 }
 
@@ -1058,7 +1062,12 @@ function countImageAttachments(cpage) {
 }
 
 function safeName(name) {
-  return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/\s+/g, " ").trim() || "note";
+  const normalized = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ").trim().replace(/[. ]+$/g, "") || "note";
+  // Windows reserves these basenames even when followed by an extension.
+  return /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(normalized)
+    ? `_${normalized}`
+    : normalized;
 }
 
 function safeJoin(root, entryName) {
@@ -1074,4 +1083,7 @@ function fmt(value) {
   return Number(value).toFixed(2).replace(/\.?0+$/, "");
 }
 
-main();
+main().catch((error) => {
+  console.error(`Conversion failed: ${error.message || error}`);
+  process.exitCode = 1;
+});
