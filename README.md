@@ -4,9 +4,19 @@ A local script for converting CollaNote `.cnote` files into PDFs. It also extrac
 
 ## Requirements
 
-- macOS
-- Node.js
-- macOS `sips`, used only when PNG attachments need to be converted for PDF rendering
+- macOS, Windows, or Linux
+- Node.js 22 or later
+- Sharp (installed by the command below; required at startup on every platform)
+
+Install dependencies in this repository's directory before running the script:
+
+```sh
+npm ci
+```
+
+Keep npm optional dependencies enabled so Sharp can install the native binaries
+for your operating system and CPU. Run installation on each target machine;
+do not copy `node_modules` between operating systems.
 
 ## Usage
 
@@ -80,4 +90,29 @@ Page 2: 500 rendered stroke(s) (0 DrawingKit, 500 legacy)
 
 ## Notes
 
+PNG attachments are converted sequentially before PDF rendering. Attachment order
+is preserved, and transparent pixels are flattened onto white for the existing
+JPEG-based PDF renderer; full alpha transparency is not preserved.
+
+If a supported image cannot be converted, that note is marked failed in its
+`manifest.txt` and no new PDF is written for it. The batch continues with later
+notes and exits with status 1 if any note fails. Previously generated files are
+not removed, so check the current manifest when retrying a failed note.
+Unrecognized image formats are recovered as `.bin` files and recorded as skipped
+in the manifest.
+
+Generated note and PDF names avoid Windows reserved device names and trailing
+dots. Original archive entry names are preserved during extraction, so an archive
+containing names that are invalid on the target filesystem can still fail.
+
 The stroke renderer was built by inspecting real CollaNote files. Because `.cnote` is proprietary, this converter is best-effort. If a note contains no page data, embedded PDF, or page image, the script still creates a folder and `manifest.txt` explaining what was found. Zero-byte `.cnote` files cannot be converted.
+
+## Tests
+
+```sh
+npm test
+```
+
+The regression suite runs the CLI against synthetic notes with real Sharp image
+conversion, including deliberately delayed PNGs, mixed image order across pages,
+transparent PNGs, unsupported attachments, conversion failures, and write errors.
